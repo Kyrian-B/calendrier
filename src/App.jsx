@@ -81,13 +81,15 @@ export default function App() {
   const [weekPanel, setWeekPanel] = useState(null); // weekKey being edited
   const [weekPanelText, setWeekPanelText] = useState("");
   const [expandedWeeks, setExpandedWeeks] = useState(new Set());
+  const [periodMode, setPeriodMode] = useState("month"); // "month" | "week"
+  const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
     async function load() {
       try {
         const res = await localStorage.getItem("objectifs_v2");
-        if (res && res.value) {
-          const parsed = JSON.parse(res.value);
+        if (res && res) {
+          const parsed = JSON.parse(res);
           setData(parsed.days || {});
           setWeekData(parsed.weeks || {});
         } else {
@@ -103,7 +105,7 @@ export default function App() {
 
   useEffect(() => {
     if (!loaded) return;
-    localStorage.setItem("objectifs_v2", JSON.stringify({ days: data, weeks: weekData }))
+    localStorage.setItem("objectifs_v2", JSON.stringify({ days: data, weeks: weekData }));
   }, [data, weekData, loaded]);
 
   function openPanel(k) {
@@ -139,10 +141,31 @@ export default function App() {
 
   function navigate(dir) {
     if (view === "heatmap") { setViewYear(y => y + dir); return; }
+    if (periodMode === "week") {
+      const anchor = new Date(viewYear, viewMonth, 1);
+      anchor.setDate(anchor.getDate() + dir * 7);
+      setViewYear(anchor.getFullYear());
+      setViewMonth(anchor.getMonth());
+      return;
+    }
     let m = viewMonth + dir, y = viewYear;
     if (m < 0) { m = 11; y--; }
     if (m > 11) { m = 0; y++; }
     setViewMonth(m); setViewYear(y);
+  }
+
+  function searchDate(e) {
+    if (e.key !== "Enter") return;
+    const val = searchQuery.trim();
+    const parts = val.split("/");
+    if (parts.length !== 3) return;
+    const d = parseInt(parts[0]), m = parseInt(parts[1]) - 1, y = parseInt(parts[2]);
+    if (isNaN(d) || isNaN(m) || isNaN(y)) return;
+    setViewYear(y); setViewMonth(m);
+    setView("calendar");
+    setPeriodMode("month");
+    setSearchQuery("");
+    setTimeout(() => openPanel(dateKey(y, m, d)), 80);
   }
 
   function toggleFilter(cat) {
@@ -265,12 +288,13 @@ export default function App() {
 
       {/* ── Main ── */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <div style={{ padding: "16px 28px", borderBottom: "1px solid rgba(255,255,255,0.07)", display: "flex", alignItems: "center", background: "#0a0a0b", flexShrink: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ padding: "16px 28px", borderBottom: "1px solid rgba(255,255,255,0.07)", display: "flex", alignItems: "center", justifyContent: "space-between", background: "#0a0a0b", flexShrink: 0, gap: 12 }}>
+          {/* Left: nav */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1 }}>
             {(view === "calendar" || view === "heatmap") && <>
               <button onClick={() => navigate(-1)} style={btnNav}>‹</button>
-              <span style={{ fontFamily: "'Syne', sans-serif", fontSize: 17, fontWeight: 700, minWidth: 180 }}>
-                {view === "heatmap" ? viewYear : `${MONTH_FR[viewMonth]} ${viewYear}`}
+              <span style={{ fontFamily: "'Syne', sans-serif", fontSize: 17, fontWeight: 700, minWidth: view === "heatmap" ? 48 : 180 }}>
+                {view === "heatmap" ? viewYear : periodMode === "month" ? `${MONTH_FR[viewMonth]} ${viewYear}` : `Semaine du ${mondayOfWeek(weekKey(new Date(viewYear, viewMonth, 1))).toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}`}
               </span>
               <button onClick={() => navigate(1)} style={btnNav}>›</button>
             </>}
@@ -278,13 +302,47 @@ export default function App() {
             {view === "history" && <span style={{ fontFamily: "'Syne', sans-serif", fontSize: 17, fontWeight: 700 }}>Historique</span>}
             {view === "bilans" && <span style={{ fontFamily: "'Syne', sans-serif", fontSize: 17, fontWeight: 700 }}>Bilan Semaine</span>}
             {view === "calendar" && (
-              <button onClick={() => { const n = new Date(); setViewYear(n.getFullYear()); setViewMonth(n.getMonth()); }} style={btnToday}>Aujourd'hui</button>
+              <button onClick={() => { const n = new Date(); setViewYear(n.getFullYear()); setViewMonth(n.getMonth()); setPeriodMode("month"); }} style={btnToday}>Aujourd'hui</button>
             )}
           </div>
+          {/* Right: search + period toggle (calendar only) */}
+          {view === "calendar" && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+              {/* Search */}
+              <div style={{ position: "relative" }}>
+                <span style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", fontSize: 10, color: "#333", pointerEvents: "none" }}>⌕</span>
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  onKeyDown={searchDate}
+                  placeholder="JJ/MM/AAAA"
+                  style={{
+                    background: "#18181c", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 6,
+                    padding: "5px 10px 5px 24px", fontSize: 10, color: "#888", outline: "none",
+                    width: 120, letterSpacing: "0.03em", transition: "border-color 0.15s",
+                  }}
+                  onFocus={e => e.target.style.borderColor = "rgba(255,255,255,0.18)"}
+                  onBlur={e => e.target.style.borderColor = "rgba(255,255,255,0.07)"}
+                />
+              </div>
+              {/* Period toggle */}
+              <div style={{ display: "flex", background: "#18181c", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 6, overflow: "hidden" }}>
+                {["month", "week"].map(p => (
+                  <button key={p} onClick={() => setPeriodMode(p)} style={{
+                    padding: "5px 12px", fontSize: 9, letterSpacing: "0.06em", textTransform: "uppercase",
+                    background: periodMode === p ? "#2a2a2e" : "transparent",
+                    color: periodMode === p ? "#ccc" : "#444",
+                    border: "none", cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s",
+                  }}>{p === "month" ? "Mois" : "Semaine"}</button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
-        <div className="fade" key={view + viewMonth + viewYear} style={{ flex: 1, overflowY: "auto", padding: "22px 28px 40px" }}>
-          {view === "calendar" && <CalendarView data={data} weekData={weekData} viewYear={viewYear} viewMonth={viewMonth} filters={filters} openPanel={openPanel} openWeekPanel={openWeekPanel} toggleWeekExpand={toggleWeekExpand} expandedWeeks={expandedWeeks} />}
+        <div className="fade" key={view + periodMode + viewMonth + viewYear} style={{ flex: 1, overflowY: "auto", padding: "22px 28px 40px" }}>
+          {view === "calendar" && <CalendarView data={data} weekData={weekData} viewYear={viewYear} viewMonth={viewMonth} periodMode={periodMode} filters={filters} openPanel={openPanel} openWeekPanel={openWeekPanel} toggleWeekExpand={toggleWeekExpand} expandedWeeks={expandedWeeks} />}
           {view === "heatmap" && <HeatmapView data={data} viewYear={viewYear} filters={filters} openPanel={openPanel} />}
           {view === "stats" && <StatsView data={data} filters={filters} />}
           {view === "history" && <HistoryView data={data} filters={filters} openPanel={openPanel} />}
@@ -369,30 +427,6 @@ export default function App() {
                 </div>
               </div>
             )}
-
-            {/* Planifier futur */}
-            {isFuture(panel) && (
-              <div style={{ marginBottom: 20 }}>
-                <div style={sectionTitle}>Planifier (futur)</div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                  {CATS.map(cat => (
-                    <div key={cat} onClick={() => setPanelPlanned(p => ({ ...p, [cat]: !p[cat] }))} style={{
-                      display: "flex", alignItems: "center", gap: 6,
-                      padding: "6px 12px", borderRadius: 100, fontSize: 10,
-                      letterSpacing: "0.05em", textTransform: "uppercase", cursor: "pointer",
-                      border: panelPlanned[cat] ? `1px solid ${COLORS[cat]}55` : "1px solid rgba(255,255,255,0.06)",
-                      background: panelPlanned[cat] ? `${COLORS[cat]}14` : "#18181c",
-                      color: panelPlanned[cat] ? `${COLORS[cat]}aa` : "#444",
-                      transition: "all 0.15s",
-                    }}>
-                      <span style={{ width: 6, height: 6, borderRadius: "50%", background: COLORS[cat], opacity: 0.5 }}></span>
-                      {LABELS[cat]}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
             {/* Note globale */}
             <div style={{ marginBottom: 20 }}>
               <div style={sectionTitle}>Note globale 🔒</div>
@@ -455,7 +489,92 @@ export default function App() {
 }
 
 // ── Calendar View ────────────────────────────────────────────────
-function CalendarView({ data, weekData, viewYear, viewMonth, filters, openPanel, openWeekPanel, toggleWeekExpand, expandedWeeks }) {
+function CalendarView({ data, weekData, viewYear, viewMonth, periodMode, filters, openPanel, openWeekPanel, toggleWeekExpand, expandedWeeks }) {
+  // ── Week mode ──
+  if (periodMode === "week") {
+    // Find Monday of the week that contains the 1st of viewYear/viewMonth
+    const anchor = new Date(viewYear, viewMonth, 1);
+    const dow = anchor.getDay() === 0 ? 6 : anchor.getDay() - 1;
+    const monday = new Date(anchor); monday.setDate(anchor.getDate() - dow);
+    const days = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(monday); d.setDate(monday.getDate() + i);
+      return { date: d, key: dateKey(d.getFullYear(), d.getMonth(), d.getDate()) };
+    });
+    const wk = weekKey(monday);
+    const hasBilan = !!weekData[wk]?.bilan;
+    const isExpanded = expandedWeeks.has(wk);
+    return (
+      <div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 6 }}>
+          {DAY_FR.map(d => <div key={d} style={{ fontSize: 9, textAlign: "center", color: "#333", letterSpacing: "0.1em", textTransform: "uppercase", padding: "4px 0" }}>{d}</div>)}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
+          {days.map(({ date, key: k }) => {
+            const dayData = data[k] || {};
+            const future = isFuture(k);
+            const tod = isToday(k);
+            const shown = future
+              ? (dayData.planned || []).filter(c => filters.has(c))
+              : (dayData.done || []).filter(c => filters.has(c));
+            const hasCatNotes = dayData.catNotes && Object.keys(dayData.catNotes).length > 0;
+            return (
+              <div key={k} onClick={() => openPanel(k)} style={{
+                background: tod ? "#18181c" : "#111114",
+                border: `1px solid ${tod ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.06)"}`,
+                borderRadius: 8, minHeight: 140, padding: "10px 10px 8px",
+                cursor: "pointer", transition: "border-color 0.15s", position: "relative",
+              }}
+              onMouseEnter={e => e.currentTarget.style.borderColor = "rgba(255,255,255,0.15)"}
+              onMouseLeave={e => e.currentTarget.style.borderColor = tod ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.06)"}
+              >
+                {(dayData.note || hasCatNotes) && <span style={{ position: "absolute", top: 6, right: 6, width: 4, height: 4, borderRadius: "50%", background: "#444" }}></span>}
+                <div style={{ marginBottom: 6 }}>
+                  <span style={{ fontSize: 10, color: tod ? "#fff" : "#555", fontWeight: tod ? 600 : 400 }}>{date.getDate()}</span>
+                  <span style={{ fontSize: 8, color: "#2a2a2a", marginLeft: 4 }}>{date.toLocaleDateString("fr-FR", { month: "short" })}</span>
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+                  {shown.map(c => (
+                    <span key={c} style={{ display: "block", height: 5, width: 22, borderRadius: 2, background: COLORS[c], opacity: future ? 0.35 : 0.85 }}></span>
+                  ))}
+                </div>
+                {shown.length > 0 && (
+                  <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 3 }}>
+                    {shown.map(c => (
+                      <span key={c} style={{ fontSize: 8, color: COLORS[c], opacity: future ? 0.5 : 0.75, letterSpacing: "0.04em" }}>{LABELS[c]}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        {/* Bilan strip for this week */}
+        <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6 }}>
+          <div onClick={() => toggleWeekExpand(wk)} style={{
+            flex: 1, display: "flex", alignItems: "center", gap: 7,
+            padding: "5px 10px", borderRadius: 6, cursor: "pointer",
+            background: hasBilan ? "rgba(255,255,255,0.03)" : "transparent",
+            border: `1px solid ${hasBilan ? "rgba(255,255,255,0.07)" : "transparent"}`,
+          }}>
+            <span style={{ fontSize: 8, color: "#333", letterSpacing: "0.08em", textTransform: "uppercase" }}>Bilan</span>
+            {hasBilan && <span style={{ fontSize: 8, color: "#555" }}>{isExpanded ? "▲" : "▼"}</span>}
+            {!hasBilan && <span style={{ fontSize: 8, color: "#2a2a2a" }}>—</span>}
+          </div>
+          <div onClick={() => openWeekPanel(wk)} style={{ padding: "4px 10px", fontSize: 8, color: "#333", cursor: "pointer", letterSpacing: "0.06em", textTransform: "uppercase", borderRadius: 5, border: "1px solid rgba(255,255,255,0.05)" }}
+            onMouseEnter={e => { e.currentTarget.style.color = "#888"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)"; }}
+            onMouseLeave={e => { e.currentTarget.style.color = "#333"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.05)"; }}
+          >{hasBilan ? "Modifier" : "+ Écrire"}</div>
+        </div>
+        {isExpanded && hasBilan && (
+          <div style={{ margin: "3px 0 6px", padding: "10px 12px", background: "#111114", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 7 }}>
+            <p className="week-bilan-text">{weekData[wk].bilan}</p>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── Month mode ──
   const first = new Date(viewYear, viewMonth, 1);
   let startDow = first.getDay() - 1; if (startDow < 0) startDow = 6;
   const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
