@@ -1,12 +1,14 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 
-const CATS = ["echecs", "calisthenics", "anglais", "sport", "meditation"];
+const CATS = ["echecs", "calisthenics", "anglais", "sport", "meditation", "marcher", "manger"];
 const COLORS = {
   echecs: "#0B6623",
   calisthenics: "#7B2CBF",
   anglais: "#1E88E5",
   sport: "#FB8C00",
   meditation: "#757575",
+  marcher: "#7B4F2E",
+  manger: "#C0392B",
 };
 const LABELS = {
   echecs: "Échecs",
@@ -14,6 +16,8 @@ const LABELS = {
   anglais: "Anglais",
   sport: "Sport",
   meditation: "Méditation",
+  marcher: "Marcher",
+  manger: "Manger / Boire",
 };
 
 function dateKey(y, m, d) {
@@ -30,11 +34,39 @@ function parseKey(k) {
 function isFuture(k) { return k > todayKey(); }
 function isToday(k) { return k === todayKey(); }
 
+// Returns "2026-W23" style key for a given date
+function weekKey(date) {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const day = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const week = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+  return `${d.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+}
+function weekKeyFromYM(year, month, day) {
+  return weekKey(new Date(year, month, day));
+}
+// Get Monday of a week from weekKey
+function mondayOfWeek(wk) {
+  const [y, w] = wk.split("-W").map(Number);
+  const jan4 = new Date(y, 0, 4);
+  const monday = new Date(jan4);
+  monday.setDate(jan4.getDate() - ((jan4.getDay() || 7) - 1) + (w - 1) * 7);
+  return monday;
+}
+function weekLabel(wk) {
+  const monday = mondayOfWeek(wk);
+  const sunday = new Date(monday); sunday.setDate(monday.getDate() + 6);
+  const fmt = (d) => d.toLocaleDateString("fr-FR", { day: "numeric", month: "short" });
+  return `${fmt(monday)} – ${fmt(sunday)}`;
+}
+
 const MONTH_FR = ["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Août","Septembre","Octobre","Novembre","Décembre"];
 const DAY_FR = ["Lun","Mar","Mer","Jeu","Ven","Sam","Dim"];
 
 export default function App() {
-  const [data, setData] = useState({});
+  const [data, setData] = useState({});         // day data
+  const [weekData, setWeekData] = useState({}); // week bilan
   const [loaded, setLoaded] = useState(false);
   const [view, setView] = useState("calendar");
   const [viewYear, setViewYear] = useState(new Date().getFullYear());
@@ -43,15 +75,25 @@ export default function App() {
   const [panelDone, setPanelDone] = useState({});
   const [panelPlanned, setPanelPlanned] = useState({});
   const [panelNote, setPanelNote] = useState("");
+  const [panelCatNotes, setPanelCatNotes] = useState({});
+  const [panelCatNotesOpen, setPanelCatNotesOpen] = useState(null);
   const [filters, setFilters] = useState(new Set(CATS));
+  const [weekPanel, setWeekPanel] = useState(null); // weekKey being edited
+  const [weekPanelText, setWeekPanelText] = useState("");
+  const [expandedWeeks, setExpandedWeeks] = useState(new Set());
 
-  // Load from persistent storage
   useEffect(() => {
     async function load() {
       try {
-        const res = await localStorage.getItem("objectifs_v1");
+        const res = await localStorage.getItem("objectifs_v2");
         if (res && res.value) {
-          setData(JSON.parse(res.value));
+          const parsed = JSON.parse(res.value);
+          setData(parsed.days || {});
+          setWeekData(parsed.weeks || {});
+        } else {
+          // Try to migrate from v1
+          const old = await localStorage.getItem("objectifs_v1");
+          if (old && old.value) setData(JSON.parse(old.value));
         }
       } catch (e) {}
       setLoaded(true);
@@ -59,11 +101,10 @@ export default function App() {
     load();
   }, []);
 
-  // Save whenever data changes
   useEffect(() => {
     if (!loaded) return;
-    localStorage.setItem("objectifs_v1", JSON.stringify(data));
-  }, [data, loaded]);
+    localStorage.setItem("objectifs_v2", JSON.stringify({ days: data, weeks: weekData }))
+  }, [data, weekData, loaded]);
 
   function openPanel(k) {
     const d = data[k] || {};
@@ -74,6 +115,8 @@ export default function App() {
     setPanelDone(done);
     setPanelPlanned(planned);
     setPanelNote(d.note || "");
+    setPanelCatNotes(d.catNotes || {});
+    setPanelCatNotesOpen(null);
     setPanel(k);
   }
 
@@ -81,10 +124,14 @@ export default function App() {
     const done = CATS.filter(c => panelDone[c]);
     const planned = isFuture(panel) ? CATS.filter(c => panelPlanned[c]) : [];
     const note = panelNote.trim();
+    // Clean catNotes: only keep notes for done cats
+    const catNotes = {};
+    done.forEach(c => { if (panelCatNotes[c]?.trim()) catNotes[c] = panelCatNotes[c].trim(); });
     setData(prev => {
       const next = { ...prev };
-      if (!done.length && !planned.length && !note) delete next[panel];
-      else next[panel] = { done, planned, note };
+      if (!done.length && !planned.length && !note && !Object.keys(catNotes).length)
+        delete next[panel];
+      else next[panel] = { done, planned, note, catNotes };
       return next;
     });
     setPanel(null);
@@ -106,6 +153,30 @@ export default function App() {
     });
   }
 
+  function openWeekPanel(wk) {
+    setWeekPanelText(weekData[wk]?.bilan || "");
+    setWeekPanel(wk);
+  }
+
+  function saveWeekPanel() {
+    const text = weekPanelText.trim();
+    setWeekData(prev => {
+      const next = { ...prev };
+      if (!text) delete next[weekPanel];
+      else next[weekPanel] = { bilan: text };
+      return next;
+    });
+    setWeekPanel(null);
+  }
+
+  function toggleWeekExpand(wk) {
+    setExpandedWeeks(prev => {
+      const next = new Set(prev);
+      if (next.has(wk)) next.delete(wk); else next.add(wk);
+      return next;
+    });
+  }
+
   if (!loaded) return (
     <div style={{ background: "#0a0a0b", color: "#555", height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "monospace", fontSize: 13 }}>
       Chargement…
@@ -118,12 +189,13 @@ export default function App() {
         @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@700;800&display=swap');
         * { box-sizing: border-box; }
         ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: #222; border-radius: 2px; }
-        textarea { font-family: 'DM Mono', monospace; }
+        textarea, input { font-family: 'DM Mono', monospace; }
         @keyframes fadeUp { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
         .fade { animation: fadeUp 0.2s ease; }
+        .week-bilan-text { white-space: pre-wrap; font-size: 11px; color: #888; line-height: 1.7; }
       `}</style>
 
-      {/* Sidebar */}
+      {/* ── Sidebar ── */}
       <aside style={{ width: 200, minWidth: 200, background: "#111114", borderRight: "1px solid rgba(255,255,255,0.07)", display: "flex", flexDirection: "column", padding: 0, overflowY: "auto" }}>
         <div style={{ padding: "22px 18px 16px", borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
           <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 14, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase" }}>Objectifs</div>
@@ -136,6 +208,7 @@ export default function App() {
             { id: "heatmap", label: "Vue annuelle", icon: "◫" },
             { id: "stats", label: "Statistiques", icon: "∿" },
             { id: "history", label: "Historique", icon: "◷" },
+            { id: "bilans", label: "Bilan Semaine", icon: "◈" },
           ].map(({ id, label, icon }) => (
             <div key={id} onClick={() => setView(id)} style={{
               display: "flex", alignItems: "center", gap: 8,
@@ -167,7 +240,7 @@ export default function App() {
 
         <div style={{ marginTop: "auto", padding: "14px 18px", borderTop: "1px solid rgba(255,255,255,0.07)", display: "flex", flexDirection: "column", gap: 6 }}>
           <button onClick={() => {
-            const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+            const blob = new Blob([JSON.stringify({ days: data, weeks: weekData }, null, 2)], { type: "application/json" });
             const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
             a.download = `objectifs_${todayKey()}.json`; a.click();
           }} style={btnSmall}>↓ Exporter JSON</button>
@@ -177,7 +250,12 @@ export default function App() {
               const file = e.target.files[0]; if (!file) return;
               const reader = new FileReader();
               reader.onload = ev => {
-                try { const imp = JSON.parse(ev.target.result); setData(prev => ({ ...prev, ...imp })); } catch {}
+                try {
+                  const imp = JSON.parse(ev.target.result);
+                  // Support both old format (flat) and new format { days, weeks }
+                  if (imp.days) { setData(prev => ({ ...prev, ...imp.days })); setWeekData(prev => ({ ...prev, ...(imp.weeks || {}) })); }
+                  else setData(prev => ({ ...prev, ...imp }));
+                } catch {}
               };
               reader.readAsText(file);
             }} />
@@ -185,9 +263,9 @@ export default function App() {
         </div>
       </aside>
 
-      {/* Main */}
+      {/* ── Main ── */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <div style={{ padding: "16px 28px", borderBottom: "1px solid rgba(255,255,255,0.07)", display: "flex", alignItems: "center", justifyContent: "space-between", background: "#0a0a0b", flexShrink: 0 }}>
+        <div style={{ padding: "16px 28px", borderBottom: "1px solid rgba(255,255,255,0.07)", display: "flex", alignItems: "center", background: "#0a0a0b", flexShrink: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             {(view === "calendar" || view === "heatmap") && <>
               <button onClick={() => navigate(-1)} style={btnNav}>‹</button>
@@ -198,6 +276,7 @@ export default function App() {
             </>}
             {view === "stats" && <span style={{ fontFamily: "'Syne', sans-serif", fontSize: 17, fontWeight: 700 }}>Statistiques</span>}
             {view === "history" && <span style={{ fontFamily: "'Syne', sans-serif", fontSize: 17, fontWeight: 700 }}>Historique</span>}
+            {view === "bilans" && <span style={{ fontFamily: "'Syne', sans-serif", fontSize: 17, fontWeight: 700 }}>Bilan Semaine</span>}
             {view === "calendar" && (
               <button onClick={() => { const n = new Date(); setViewYear(n.getFullYear()); setViewMonth(n.getMonth()); }} style={btnToday}>Aujourd'hui</button>
             )}
@@ -205,26 +284,28 @@ export default function App() {
         </div>
 
         <div className="fade" key={view + viewMonth + viewYear} style={{ flex: 1, overflowY: "auto", padding: "22px 28px 40px" }}>
-          {view === "calendar" && <CalendarView data={data} viewYear={viewYear} viewMonth={viewMonth} filters={filters} openPanel={openPanel} />}
+          {view === "calendar" && <CalendarView data={data} weekData={weekData} viewYear={viewYear} viewMonth={viewMonth} filters={filters} openPanel={openPanel} openWeekPanel={openWeekPanel} toggleWeekExpand={toggleWeekExpand} expandedWeeks={expandedWeeks} />}
           {view === "heatmap" && <HeatmapView data={data} viewYear={viewYear} filters={filters} openPanel={openPanel} />}
           {view === "stats" && <StatsView data={data} filters={filters} />}
           {view === "history" && <HistoryView data={data} filters={filters} openPanel={openPanel} />}
+          {view === "bilans" && <BilanView weekData={weekData} openWeekPanel={openWeekPanel} />}
         </div>
       </div>
 
-      {/* Day Panel */}
+      {/* ── Day Panel ── */}
       {panel && (
         <div onClick={e => { if (e.target === e.currentTarget) setPanel(null); }} style={{
           position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", backdropFilter: "blur(6px)",
           display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100,
         }}>
-          <div style={{ background: "#111114", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 14, width: 400, maxWidth: "92vw", padding: 28, position: "relative" }}>
+          <div style={{ background: "#111114", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 14, width: 420, maxWidth: "94vw", padding: 28, position: "relative", maxHeight: "90vh", overflowY: "auto" }}>
             <button onClick={() => setPanel(null)} style={{ position: "absolute", top: 14, right: 14, background: "#18181c", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "50%", width: 26, height: 26, color: "#888", cursor: "pointer", fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
 
             <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 18, fontWeight: 700, marginBottom: 20, textTransform: "capitalize" }}>
               {parseKey(panel).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
             </div>
 
+            {/* Réalisé */}
             <div style={{ marginBottom: 20 }}>
               <div style={sectionTitle}>Réalisé ce jour</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
@@ -245,6 +326,51 @@ export default function App() {
               </div>
             </div>
 
+            {/* Notes par objectif — uniquement les objectifs cochés */}
+            {CATS.some(c => panelDone[c]) && (
+              <div style={{ marginBottom: 20 }}>
+                <div style={sectionTitle}>Notes par objectif</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {CATS.filter(c => panelDone[c]).map(cat => (
+                    <div key={cat}>
+                      <div
+                        onClick={() => setPanelCatNotesOpen(prev => prev === cat ? null : cat)}
+                        style={{
+                          display: "flex", alignItems: "center", justifyContent: "space-between",
+                          padding: "7px 10px", borderRadius: 7, cursor: "pointer",
+                          background: panelCatNotesOpen === cat ? "#18181c" : "transparent",
+                          border: `1px solid ${panelCatNotesOpen === cat ? "rgba(255,255,255,0.08)" : "transparent"}`,
+                          transition: "all 0.15s",
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 10, color: panelCatNotes[cat]?.trim() ? "#ccc" : "#555", letterSpacing: "0.04em" }}>
+                          <span style={{ width: 6, height: 6, borderRadius: "50%", background: COLORS[cat] }}></span>
+                          {LABELS[cat]}
+                          {panelCatNotes[cat]?.trim() && <span style={{ fontSize: 8, color: COLORS[cat], opacity: 0.7 }}>● note</span>}
+                        </div>
+                        <span style={{ fontSize: 9, color: "#444" }}>{panelCatNotesOpen === cat ? "▲" : "▼"}</span>
+                      </div>
+                      {panelCatNotesOpen === cat && (
+                        <textarea
+                          autoFocus
+                          value={panelCatNotes[cat] || ""}
+                          onChange={e => setPanelCatNotes(p => ({ ...p, [cat]: e.target.value }))}
+                          placeholder={`Note pour ${LABELS[cat]}…`}
+                          style={{
+                            width: "100%", background: "#0a0a0b", border: "1px solid rgba(255,255,255,0.06)",
+                            borderTop: "none", borderRadius: "0 0 7px 7px", color: "#f0f0f0",
+                            fontSize: 11, padding: "10px 12px", resize: "vertical", minHeight: 64,
+                            outline: "none", lineHeight: 1.6,
+                          }}
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Planifier futur */}
             {isFuture(panel) && (
               <div style={{ marginBottom: 20 }}>
                 <div style={sectionTitle}>Planifier (futur)</div>
@@ -267,12 +393,13 @@ export default function App() {
               </div>
             )}
 
+            {/* Note globale */}
             <div style={{ marginBottom: 20 }}>
-              <div style={sectionTitle}>Note privée 🔒</div>
-              <textarea value={panelNote} onChange={e => setPanelNote(e.target.value)} placeholder="Visible uniquement ici…" style={{
+              <div style={sectionTitle}>Note globale 🔒</div>
+              <textarea value={panelNote} onChange={e => setPanelNote(e.target.value)} placeholder="Note de la journée…" style={{
                 width: "100%", background: "#18181c", border: "1px solid rgba(255,255,255,0.08)",
                 borderRadius: 8, color: "#f0f0f0", fontSize: 12, padding: "10px 12px",
-                resize: "vertical", minHeight: 80, outline: "none", lineHeight: 1.6,
+                resize: "vertical", minHeight: 72, outline: "none", lineHeight: 1.6,
               }} />
             </div>
 
@@ -287,11 +414,48 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* ── Week Bilan Panel ── */}
+      {weekPanel && (
+        <div onClick={e => { if (e.target === e.currentTarget) setWeekPanel(null); }} style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", backdropFilter: "blur(6px)",
+          display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100,
+        }}>
+          <div style={{ background: "#111114", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 14, width: 480, maxWidth: "94vw", padding: 28, position: "relative" }}>
+            <button onClick={() => setWeekPanel(null)} style={{ position: "absolute", top: 14, right: 14, background: "#18181c", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "50%", width: 26, height: 26, color: "#888", cursor: "pointer", fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
+
+            <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 16, fontWeight: 700, marginBottom: 4 }}>Bilan Semaine</div>
+            <div style={{ fontSize: 10, color: "#444", marginBottom: 20, letterSpacing: "0.03em" }}>{weekLabel(weekPanel)}</div>
+
+            <textarea
+              autoFocus
+              value={weekPanelText}
+              onChange={e => setWeekPanelText(e.target.value)}
+              placeholder={"Points forts, points faibles, difficultés rencontrées,\nobjectifs de la semaine suivante, réflexions personnelles…"}
+              style={{
+                width: "100%", background: "#18181c", border: "1px solid rgba(255,255,255,0.08)",
+                borderRadius: 8, color: "#f0f0f0", fontSize: 12, padding: "14px", resize: "vertical",
+                minHeight: 200, outline: "none", lineHeight: 1.8,
+              }}
+            />
+
+            <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+              <button onClick={saveWeekPanel} style={{ flex: 1, padding: "10px", background: "#fff", color: "#000", border: "none", borderRadius: 8, fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", cursor: "pointer", fontFamily: "inherit", fontWeight: 500 }}>
+                Enregistrer
+              </button>
+              <button onClick={() => setWeekPanel(null)} style={{ padding: "10px 16px", background: "#18181c", color: "#888", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", cursor: "pointer", fontFamily: "inherit" }}>
+                Annuler
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function CalendarView({ data, viewYear, viewMonth, filters, openPanel }) {
+// ── Calendar View ────────────────────────────────────────────────
+function CalendarView({ data, weekData, viewYear, viewMonth, filters, openPanel, openWeekPanel, toggleWeekExpand, expandedWeeks }) {
   const first = new Date(viewYear, viewMonth, 1);
   let startDow = first.getDay() - 1; if (startDow < 0) startDow = 6;
   const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
@@ -315,39 +479,86 @@ function CalendarView({ data, viewYear, viewMonth, filters, openPanel }) {
     cells.push({ key: dateKey(y, m, d), day: d, dim: true, other: true });
   }
 
+  // Build rows of 7
+  const rows = [];
+  for (let i = 0; i < cells.length; i += 7) rows.push(cells.slice(i, i + 7));
+
   return (
     <div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 6 }}>
         {DAY_FR.map(d => <div key={d} style={{ fontSize: 9, textAlign: "center", color: "#333", letterSpacing: "0.1em", textTransform: "uppercase", padding: "4px 0" }}>{d}</div>)}
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
-        {cells.map(({ key: k, day, dim, other }) => {
-          const dayData = data[k] || {};
-          const future = isFuture(k);
-          const tod = isToday(k);
-          const shown = future
-            ? (dayData.planned || []).filter(c => filters.has(c))
-            : (dayData.done || []).filter(c => filters.has(c));
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {rows.map((row, ri) => {
+          const midCell = row.find(c => !c.other) || row[3];
+          const wk = weekKeyFromYM(...midCell.key.split("-").map((v,i) => i===1?Number(v)-1:Number(v)));
+          const hasBilan = !!weekData[wk]?.bilan;
+          const isExpanded = expandedWeeks.has(wk);
           return (
-            <div key={k} onClick={() => !other && openPanel(k)} style={{
-              background: tod ? "#18181c" : "#111114",
-              border: `1px solid ${tod ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.06)"}`,
-              borderRadius: 8, minHeight: 76, padding: "7px 7px 6px",
-              cursor: other ? "default" : "pointer",
-              opacity: dim ? 0.3 : 1,
-              transition: "border-color 0.15s, background 0.15s",
-              position: "relative",
-            }}
-            onMouseEnter={e => { if (!other) e.currentTarget.style.borderColor = "rgba(255,255,255,0.15)"; }}
-            onMouseLeave={e => { if (!other) e.currentTarget.style.borderColor = tod ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.06)"; }}
-            >
-              {dayData.note && <span style={{ position: "absolute", top: 5, right: 5, width: 4, height: 4, borderRadius: "50%", background: "#444" }}></span>}
-              <span style={{ fontSize: 10, color: tod ? "#fff" : "#555", display: "block", marginBottom: 5, fontWeight: tod ? 600 : 400 }}>{day}</span>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 2 }}>
-                {shown.map(c => (
-                  <span key={c} style={{ display: "block", height: 4, width: 20, borderRadius: 2, background: COLORS[c], opacity: future ? 0.35 : 0.85 }}></span>
-                ))}
+            <div key={ri}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
+                {row.map(({ key: k, day, dim, other }) => {
+                  const dayData = data[k] || {};
+                  const future = isFuture(k);
+                  const tod = isToday(k);
+                  const shown = future
+                    ? (dayData.planned || []).filter(c => filters.has(c))
+                    : (dayData.done || []).filter(c => filters.has(c));
+                  const hasCatNotes = dayData.catNotes && Object.keys(dayData.catNotes).length > 0;
+                  return (
+                    <div key={k} onClick={() => !other && openPanel(k)} style={{
+                      background: tod ? "#18181c" : "#111114",
+                      border: `1px solid ${tod ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.06)"}`,
+                      borderRadius: 8, minHeight: 76, padding: "7px 7px 6px",
+                      cursor: other ? "default" : "pointer",
+                      opacity: dim ? 0.3 : 1,
+                      transition: "border-color 0.15s",
+                      position: "relative",
+                    }}
+                    onMouseEnter={e => { if (!other) e.currentTarget.style.borderColor = "rgba(255,255,255,0.15)"; }}
+                    onMouseLeave={e => { if (!other) e.currentTarget.style.borderColor = tod ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.06)"; }}
+                    >
+                      {(dayData.note || hasCatNotes) && <span style={{ position: "absolute", top: 5, right: 5, width: 4, height: 4, borderRadius: "50%", background: "#444" }}></span>}
+                      <span style={{ fontSize: 10, color: tod ? "#fff" : "#555", display: "block", marginBottom: 5, fontWeight: tod ? 600 : 400 }}>{day}</span>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 2 }}>
+                        {shown.map(c => (
+                          <span key={c} style={{ display: "block", height: 4, width: 18, borderRadius: 2, background: COLORS[c], opacity: future ? 0.35 : 0.85 }}></span>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
+              {/* Week bilan strip */}
+              <div style={{ marginTop: 3, display: "flex", alignItems: "center", gap: 6 }}>
+                <div
+                  onClick={() => toggleWeekExpand(wk)}
+                  style={{
+                    flex: 1, display: "flex", alignItems: "center", gap: 7,
+                    padding: "5px 10px", borderRadius: 6, cursor: "pointer",
+                    background: hasBilan ? "rgba(255,255,255,0.03)" : "transparent",
+                    border: `1px solid ${hasBilan ? "rgba(255,255,255,0.07)" : "transparent"}`,
+                    transition: "all 0.15s",
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.04)"}
+                  onMouseLeave={e => e.currentTarget.style.background = hasBilan ? "rgba(255,255,255,0.03)" : "transparent"}
+                >
+                  <span style={{ fontSize: 8, color: "#333", letterSpacing: "0.08em", textTransform: "uppercase" }}>Bilan</span>
+                  {hasBilan && <span style={{ fontSize: 8, color: "#555" }}>{isExpanded ? "▲" : "▼"}</span>}
+                  {!hasBilan && <span style={{ fontSize: 8, color: "#2a2a2a" }}>—</span>}
+                </div>
+                <div
+                  onClick={() => openWeekPanel(wk)}
+                  style={{ padding: "4px 10px", fontSize: 8, color: "#333", cursor: "pointer", letterSpacing: "0.06em", textTransform: "uppercase", borderRadius: 5, border: "1px solid rgba(255,255,255,0.05)", background: "transparent", transition: "all 0.15s" }}
+                  onMouseEnter={e => { e.currentTarget.style.color = "#888"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)"; }}
+                  onMouseLeave={e => { e.currentTarget.style.color = "#333"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.05)"; }}
+                >{hasBilan ? "Modifier" : "+ Écrire"}</div>
+              </div>
+              {isExpanded && hasBilan && (
+                <div style={{ margin: "3px 0 6px", padding: "10px 12px", background: "#111114", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 7 }}>
+                  <p className="week-bilan-text">{weekData[wk].bilan}</p>
+                </div>
+              )}
             </div>
           );
         })}
@@ -356,12 +567,12 @@ function CalendarView({ data, viewYear, viewMonth, filters, openPanel }) {
   );
 }
 
+// ── Heatmap View ─────────────────────────────────────────────────
 function HeatmapView({ data, viewYear, filters, openPanel }) {
   const jan1 = new Date(viewYear, 0, 1);
   const startDow = jan1.getDay() === 0 ? 6 : jan1.getDay() - 1;
   const startDate = new Date(jan1);
   startDate.setDate(1 - startDow);
-
   const weeks = [];
   let d = new Date(startDate);
   for (let w = 0; w < 53; w++) {
@@ -376,7 +587,6 @@ function HeatmapView({ data, viewYear, filters, openPanel }) {
     }
     weeks.push(week);
   }
-
   return (
     <div>
       <div style={{ background: "#111114", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 12, padding: 20, overflowX: "auto" }}>
@@ -412,28 +622,25 @@ function HeatmapView({ data, viewYear, filters, openPanel }) {
   );
 }
 
+// ── Stats View ───────────────────────────────────────────────────
 function StatsView({ data, filters }) {
   const pastKeys = Object.keys(data).filter(k => !isFuture(k)).sort();
   const totals = {}, streakCur = {}, streakBest = {};
   CATS.forEach(c => { totals[c] = 0; streakCur[c] = 0; streakBest[c] = 0; });
   pastKeys.forEach(k => { (data[k].done || []).forEach(c => { if (CATS.includes(c)) totals[c]++; }); });
-
   CATS.forEach(cat => {
     let cur = 0, best = 0, prev = null;
     pastKeys.forEach(k => {
       const done = data[k].done || [];
       if (done.includes(cat)) {
-        if (prev) {
-          const diff = (parseKey(k) - parseKey(prev)) / 86400000;
-          cur = diff === 1 ? cur + 1 : 1;
-        } else cur = 1;
+        if (prev) { const diff = (parseKey(k) - parseKey(prev)) / 86400000; cur = diff === 1 ? cur + 1 : 1; }
+        else cur = 1;
         if (cur > best) best = cur;
       } else cur = 0;
       prev = k;
     });
     streakCur[cat] = cur; streakBest[cat] = best;
   });
-
   const now = new Date();
   const months = [];
   let maxVal = 1;
@@ -443,15 +650,13 @@ function StatsView({ data, filters }) {
     const cats = {}; CATS.forEach(c => cats[c] = 0);
     Object.keys(data).forEach(k => {
       const kd = parseKey(k);
-      if (kd.getFullYear() === y && kd.getMonth() === m) {
+      if (kd.getFullYear() === y && kd.getMonth() === m)
         (data[k].done || []).forEach(c => { if (CATS.includes(c)) cats[c]++; });
-      }
     });
     const total = CATS.reduce((s, c) => s + cats[c], 0);
     if (total > maxVal) maxVal = total;
     months.push({ label: d.toLocaleDateString("fr-FR", { month: "short" }), cats, total });
   }
-
   return (
     <div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: 10, marginBottom: 24 }}>
@@ -474,7 +679,6 @@ function StatsView({ data, filters }) {
           </div>
         ))}
       </div>
-
       <div style={{ marginBottom: 8, fontSize: 9, color: "#333", letterSpacing: "0.1em", textTransform: "uppercase" }}>Activité par mois</div>
       <div style={{ background: "#111114", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 12, padding: 20 }}>
         <div style={{ display: "flex", alignItems: "flex-end", gap: 4, height: 100 }}>
@@ -494,10 +698,10 @@ function StatsView({ data, filters }) {
   );
 }
 
+// ── History View ─────────────────────────────────────────────────
 function HistoryView({ data, filters, openPanel }) {
   const past = Object.keys(data).filter(k => !isFuture(k) && ((data[k].done || []).length > 0 || data[k].note)).sort().reverse();
   const future = Object.keys(data).filter(k => isFuture(k) && (data[k].planned || []).length > 0).sort();
-
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
       {future.length > 0 && (
@@ -523,6 +727,7 @@ function HistoryItem({ k, data, filters, openPanel, type }) {
   const dayData = data[k] || {};
   const cats = (type === "future" ? (dayData.planned || []) : (dayData.done || [])).filter(c => filters.has(c));
   const d = parseKey(k);
+  const hasCatNotes = dayData.catNotes && Object.keys(dayData.catNotes).length > 0;
   return (
     <div onClick={() => openPanel(k)} style={{
       background: "#111114", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 8,
@@ -536,7 +741,7 @@ function HistoryItem({ k, data, filters, openPanel, type }) {
         <div style={{ fontSize: 11, color: "#888", textTransform: "capitalize" }}>
           {d.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
         </div>
-        {dayData.note && <div style={{ fontSize: 9, color: "#333", marginTop: 2 }}>🔒 Note privée</div>}
+        {(dayData.note || hasCatNotes) && <div style={{ fontSize: 9, color: "#333", marginTop: 2 }}>🔒 Notes privées</div>}
       </div>
       <div style={{ display: "flex", gap: 4, flexWrap: "wrap", justifyContent: "flex-end" }}>
         {cats.map(c => (
@@ -549,6 +754,76 @@ function HistoryItem({ k, data, filters, openPanel, type }) {
   );
 }
 
+// ── Bilan Semaine View ───────────────────────────────────────────
+function BilanView({ weekData, openWeekPanel }) {
+  const now = new Date();
+  // Show last 12 weeks + current
+  const weeks = [];
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(now);
+    d.setDate(now.getDate() - i * 7);
+    weeks.push(weekKey(d));
+  }
+  // Deduplicate while preserving order
+  const seen = new Set();
+  const uniqueWeeks = [];
+  weeks.forEach(w => { if (!seen.has(w)) { seen.add(w); uniqueWeeks.push(w); } });
+
+  // Also show weeks that have bilans not in the list
+  const allBilanWeeks = Object.keys(weekData).sort().reverse();
+  allBilanWeeks.forEach(w => { if (!seen.has(w)) { seen.add(w); uniqueWeeks.unshift(w); } });
+
+  const currentWk = weekKey(now);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 640 }}>
+      {uniqueWeeks.map(wk => {
+        const hasBilan = !!weekData[wk]?.bilan;
+        const isCurrent = wk === currentWk;
+        return (
+          <BilanCard key={wk} wk={wk} bilan={weekData[wk]?.bilan} isCurrent={isCurrent} openWeekPanel={openWeekPanel} />
+        );
+      })}
+    </div>
+  );
+}
+
+function BilanCard({ wk, bilan, isCurrent, openWeekPanel }) {
+  const [open, setOpen] = useState(isCurrent);
+  return (
+    <div style={{ background: "#111114", border: `1px solid ${isCurrent ? "rgba(255,255,255,0.14)" : "rgba(255,255,255,0.06)"}`, borderRadius: 10, overflow: "hidden" }}>
+      <div
+        onClick={() => setOpen(o => !o)}
+        style={{ padding: "12px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" }}
+        onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.02)"}
+        onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {isCurrent && <span style={{ fontSize: 7, padding: "2px 7px", borderRadius: 100, background: "rgba(255,255,255,0.07)", color: "#666", textTransform: "uppercase", letterSpacing: "0.08em" }}>En cours</span>}
+          <span style={{ fontSize: 11, color: "#888" }}>{weekLabel(wk)}</span>
+          {!bilan && <span style={{ fontSize: 9, color: "#2a2a2a" }}>— vide</span>}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span
+            onClick={e => { e.stopPropagation(); openWeekPanel(wk); }}
+            style={{ fontSize: 8, color: "#333", cursor: "pointer", letterSpacing: "0.06em", textTransform: "uppercase", padding: "3px 8px", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 5, transition: "all 0.15s" }}
+            onMouseEnter={e => { e.currentTarget.style.color = "#888"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.12)"; }}
+            onMouseLeave={e => { e.currentTarget.style.color = "#333"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.06)"; }}
+          >{bilan ? "Modifier" : "+ Écrire"}</span>
+          {bilan && <span style={{ fontSize: 9, color: "#333" }}>{open ? "▲" : "▼"}</span>}
+        </div>
+      </div>
+      {open && bilan && (
+        <div style={{ padding: "0 16px 14px" }}>
+          <div style={{ height: 1, background: "rgba(255,255,255,0.05)", marginBottom: 12 }}></div>
+          <p className="week-bilan-text">{bilan}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Shared styles ────────────────────────────────────────────────
 const btnSmall = {
   display: "flex", alignItems: "center", gap: 6,
   padding: "7px 10px", fontSize: 9, letterSpacing: "0.05em", textTransform: "uppercase",
