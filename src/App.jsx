@@ -73,8 +73,16 @@ export default function App() {
   const [periodMode, setPeriodMode] = useState("month");
   const [searchQuery, setSearchQuery] = useState("");
   const [showBilan, setShowBilan] = useState(false);
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
-useEffect(() => {
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  useEffect(() => {
     async function load() {
       try {
         const { data: row } = await supabase
@@ -200,6 +208,71 @@ useEffect(() => {
     </div>
   );
 
+  const sidebarInner = (closeFn) => (
+    <>
+      <div style={{ padding: "22px 18px 16px", borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+        <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 14, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase" }}>Objectifs</div>
+        <div style={{ fontSize: 9, color: "#444", marginTop: 2, letterSpacing: "0.06em" }}>Suivi personnel</div>
+      </div>
+      <nav style={{ padding: "10px 0" }}>
+        {[
+          { id: "calendar", label: "Calendrier", icon: "▦" },
+          { id: "heatmap", label: "Vue annuelle", icon: "◫" },
+          { id: "stats", label: "Statistiques", icon: "∿" },
+          { id: "history", label: "Historique", icon: "◷" },
+          { id: "bilans", label: "Bilan Semaine", icon: "◈" },
+        ].map(({ id, label, icon }) => (
+          <div key={id} onClick={() => { setView(id); if (closeFn) closeFn(); }} style={{
+            display: "flex", alignItems: "center", gap: 8,
+            padding: "9px 18px", fontSize: 11, cursor: "pointer",
+            color: view === id ? "#f0f0f0" : "#666",
+            background: view === id ? "#18181c" : "transparent",
+            borderLeft: `2px solid ${view === id ? "#fff" : "transparent"}`,
+            letterSpacing: "0.03em", transition: "all 0.15s",
+          }}>
+            <span style={{ fontSize: 13 }}>{icon}</span>{label}
+          </div>
+        ))}
+      </nav>
+      <div style={{ padding: "16px 18px 6px" }}>
+        <div style={{ fontSize: 8, letterSpacing: "0.14em", textTransform: "uppercase", color: "#333", marginBottom: 8 }}>Catégories</div>
+      </div>
+      {CATS.map(cat => (
+        <div key={cat} onClick={() => toggleFilter(cat)} style={{
+          display: "flex", alignItems: "center", gap: 8,
+          padding: "7px 18px", fontSize: 11, cursor: "pointer",
+          color: filters.has(cat) ? "#ccc" : "#3a3a3a",
+          transition: "color 0.15s",
+        }}>
+          <span style={{ width: 7, height: 7, borderRadius: "50%", background: COLORS[cat], opacity: filters.has(cat) ? 1 : 0.2, flexShrink: 0, transition: "opacity 0.15s" }}></span>
+          {LABELS[cat]}
+        </div>
+      ))}
+      <div style={{ marginTop: "auto", padding: "14px 18px", borderTop: "1px solid rgba(255,255,255,0.07)", display: "flex", flexDirection: "column", gap: 6 }}>
+        <button onClick={() => {
+          const blob = new Blob([JSON.stringify({ days: data, weeks: weekData }, null, 2)], { type: "application/json" });
+          const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+          a.download = `objectifs_${todayKey()}.json`; a.click();
+        }} style={btnSmall}>↓ Exporter JSON</button>
+        <label style={{ ...btnSmall, cursor: "pointer" }}>
+          ↑ Importer JSON
+          <input type="file" accept=".json" style={{ display: "none" }} onChange={e => {
+            const file = e.target.files[0]; if (!file) return;
+            const reader = new FileReader();
+            reader.onload = ev => {
+              try {
+                const imp = JSON.parse(ev.target.result);
+                if (imp.days) { setData(prev => ({ ...prev, ...imp.days })); setWeekData(prev => ({ ...prev, ...(imp.weeks || {}) })); }
+                else setData(prev => ({ ...prev, ...imp }));
+              } catch {}
+            };
+            reader.readAsText(file);
+          }} />
+        </label>
+      </div>
+    </>
+  );
+
   return (
     <div style={{ display: "flex", height: "100vh", background: "#0a0a0b", color: "#f0f0f0", fontFamily: "'DM Mono', 'Courier New', monospace", overflow: "hidden" }}>
       <style>{`
@@ -212,159 +285,115 @@ useEffect(() => {
         .week-bilan-text { white-space: pre-wrap; font-size: 11px; color: #888; line-height: 1.7; }
       `}</style>
 
-      {/* ── Sidebar ── */}
-      <aside style={{ width: 200, minWidth: 200, background: "#111114", borderRight: "1px solid rgba(255,255,255,0.07)", display: "flex", flexDirection: "column", padding: 0, overflowY: "auto" }}>
-        <div style={{ padding: "22px 18px 16px", borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
-          <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 14, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase" }}>Objectifs</div>
-          <div style={{ fontSize: 9, color: "#444", marginTop: 2, letterSpacing: "0.06em" }}>Suivi personnel</div>
-        </div>
+      {/* ── Sidebar PC ── */}
+      {!isMobile && (
+        <aside style={{ width: 200, minWidth: 200, background: "#111114", borderRight: "1px solid rgba(255,255,255,0.07)", display: "flex", flexDirection: "column", padding: 0, overflowY: "auto" }}>
+          {sidebarInner(null)}
+        </aside>
+      )}
 
-        <nav style={{ padding: "10px 0" }}>
-          {[
-            { id: "calendar", label: "Calendrier", icon: "▦" },
-            { id: "heatmap", label: "Vue annuelle", icon: "◫" },
-            { id: "stats", label: "Statistiques", icon: "∿" },
-            { id: "history", label: "Historique", icon: "◷" },
-            { id: "bilans", label: "Bilan Semaine", icon: "◈" },
-          ].map(({ id, label, icon }) => (
-            <div key={id} onClick={() => setView(id)} style={{
-              display: "flex", alignItems: "center", gap: 8,
-              padding: "9px 18px", fontSize: 11, cursor: "pointer",
-              color: view === id ? "#f0f0f0" : "#666",
-              background: view === id ? "#18181c" : "transparent",
-              borderLeft: `2px solid ${view === id ? "#fff" : "transparent"}`,
-              letterSpacing: "0.03em", transition: "all 0.15s",
-            }}>
-              <span style={{ fontSize: 13 }}>{icon}</span>{label}
-            </div>
-          ))}
-        </nav>
-
-        <div style={{ padding: "16px 18px 6px" }}>
-          <div style={{ fontSize: 8, letterSpacing: "0.14em", textTransform: "uppercase", color: "#333", marginBottom: 8 }}>Catégories</div>
-        </div>
-        {CATS.map(cat => (
-          <div key={cat} onClick={() => toggleFilter(cat)} style={{
-            display: "flex", alignItems: "center", gap: 8,
-            padding: "7px 18px", fontSize: 11, cursor: "pointer",
-            color: filters.has(cat) ? "#ccc" : "#3a3a3a",
-            transition: "color 0.15s",
-          }}>
-            <span style={{ width: 7, height: 7, borderRadius: "50%", background: COLORS[cat], opacity: filters.has(cat) ? 1 : 0.2, flexShrink: 0, transition: "opacity 0.15s" }}></span>
-            {LABELS[cat]}
-          </div>
-        ))}
-
-        <div style={{ marginTop: "auto", padding: "14px 18px", borderTop: "1px solid rgba(255,255,255,0.07)", display: "flex", flexDirection: "column", gap: 6 }}>
-          <button onClick={() => {
-            const blob = new Blob([JSON.stringify({ days: data, weeks: weekData }, null, 2)], { type: "application/json" });
-            const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
-            a.download = `objectifs_${todayKey()}.json`; a.click();
-          }} style={btnSmall}>↓ Exporter JSON</button>
-          <label style={{ ...btnSmall, cursor: "pointer" }}>
-            ↑ Importer JSON
-            <input type="file" accept=".json" style={{ display: "none" }} onChange={e => {
-              const file = e.target.files[0]; if (!file) return;
-              const reader = new FileReader();
-              reader.onload = ev => {
-                try {
-                  const imp = JSON.parse(ev.target.result);
-                  if (imp.days) { setData(prev => ({ ...prev, ...imp.days })); setWeekData(prev => ({ ...prev, ...(imp.weeks || {}) })); }
-                  else setData(prev => ({ ...prev, ...imp }));
-                } catch {}
-              };
-              reader.readAsText(file);
-            }} />
-          </label>
-        </div>
-      </aside>
+      {/* ── Sidebar Mobile Overlay ── */}
+      {isMobile && sidebarOpen && (
+        <>
+          <div onClick={() => setSidebarOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 200 }} />
+          <aside style={{ position: "fixed", left: 0, top: 0, bottom: 0, width: 220, background: "#111114", borderRight: "1px solid rgba(255,255,255,0.07)", display: "flex", flexDirection: "column", zIndex: 201, overflowY: "auto" }}>
+            {sidebarInner(() => setSidebarOpen(false))}
+          </aside>
+        </>
+      )}
 
       {/* ── Main ── */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
 
         {/* ── Topbar ── */}
-        <div style={{ padding: "16px 28px", borderBottom: "1px solid rgba(255,255,255,0.07)", display: "flex", alignItems: "center", background: "#0a0a0b", flexShrink: 0, gap: 12 }}>
+        <div style={{
+          padding: isMobile ? "10px 12px" : "16px 28px",
+          borderBottom: "1px solid rgba(255,255,255,0.07)",
+          display: "flex", alignItems: "center", background: "#0a0a0b",
+          flexShrink: 0, gap: isMobile ? 6 : 12,
+        }}>
 
-          {/* Left: nav arrows + title + Aujourd'hui */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {/* Burger mobile */}
+          {isMobile && (
+            <button onClick={() => setSidebarOpen(o => !o)} style={{
+              background: "#18181c", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 6,
+              color: "#888", cursor: "pointer", fontSize: 16, width: 32, height: 32,
+              display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+            }}>☰</button>
+          )}
+
+          {/* Left: nav + title + Aujourd'hui */}
+          <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 5 : 10, flex: 1, minWidth: 0 }}>
             {(view === "calendar" || view === "heatmap") && <>
               <button onClick={() => navigate(-1)} style={btnNav}>‹</button>
-              <span style={{ fontFamily: "'Syne', sans-serif", fontSize: 17, fontWeight: 700, minWidth: view === "heatmap" ? 48 : 180 }}>
+              <span style={{ fontFamily: "'Syne', sans-serif", fontSize: isMobile ? 13 : 17, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {view === "heatmap"
                   ? viewYear
                   : periodMode === "month"
                     ? `${MONTH_FR[viewMonth]} ${viewYear}`
-                    : `Semaine du ${mondayOfWeek(weekKey(new Date(viewYear, viewMonth, 1))).toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}`}
+                    : `Sem. ${mondayOfWeek(weekKey(new Date(viewYear, viewMonth, 1))).toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}`}
               </span>
               <button onClick={() => navigate(1)} style={btnNav}>›</button>
             </>}
-            {view === "stats" && <span style={{ fontFamily: "'Syne', sans-serif", fontSize: 17, fontWeight: 700 }}>Statistiques</span>}
-            {view === "history" && <span style={{ fontFamily: "'Syne', sans-serif", fontSize: 17, fontWeight: 700 }}>Historique</span>}
-            {view === "bilans" && <span style={{ fontFamily: "'Syne', sans-serif", fontSize: 17, fontWeight: 700 }}>Bilan Semaine</span>}
+            {view === "stats" && <span style={{ fontFamily: "'Syne', sans-serif", fontSize: isMobile ? 13 : 17, fontWeight: 700 }}>Statistiques</span>}
+            {view === "history" && <span style={{ fontFamily: "'Syne', sans-serif", fontSize: isMobile ? 13 : 17, fontWeight: 700 }}>Historique</span>}
+            {view === "bilans" && <span style={{ fontFamily: "'Syne', sans-serif", fontSize: isMobile ? 13 : 17, fontWeight: 700 }}>Bilan Semaine</span>}
             {view === "calendar" && (
               <button onClick={() => { const n = new Date(); setViewYear(n.getFullYear()); setViewMonth(n.getMonth()); setPeriodMode("month"); }} style={btnToday}>
-                Aujourd'hui
+                {isMobile ? "Auj." : "Aujourd'hui"}
               </button>
             )}
           </div>
 
-          {/* Center-right: search + period toggle (calendar only) */}
+          {/* Right: search + period toggle + bilan */}
           {view === "calendar" && (
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              {/* Search */}
-              <div style={{ position: "relative" }}>
-                <span style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", fontSize: 10, color: "#333", pointerEvents: "none" }}>⌕</span>
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={e => setSearchQuery(e.target.value)}
-                  onKeyDown={searchDate}
-                  placeholder="JJ/MM/AAAA"
-                  style={{
-                    background: "#18181c", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 6,
-                    padding: "5px 10px 5px 24px", fontSize: 10, color: "#888", outline: "none",
-                    width: 120, letterSpacing: "0.03em", transition: "border-color 0.15s",
-                  }}
-                  onFocus={e => e.target.style.borderColor = "rgba(255,255,255,0.18)"}
-                  onBlur={e => e.target.style.borderColor = "rgba(255,255,255,0.07)"}
-                />
-              </div>
-              {/* Period toggle */}
+            <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 4 : 8, flexShrink: 0 }}>
+              {!isMobile && (
+                <div style={{ position: "relative" }}>
+                  <span style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", fontSize: 10, color: "#333", pointerEvents: "none" }}>⌕</span>
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    onKeyDown={searchDate}
+                    placeholder="JJ/MM/AAAA"
+                    style={{
+                      background: "#18181c", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 6,
+                      padding: "5px 10px 5px 24px", fontSize: 10, color: "#888", outline: "none",
+                      width: 120, letterSpacing: "0.03em", transition: "border-color 0.15s",
+                    }}
+                    onFocus={e => e.target.style.borderColor = "rgba(255,255,255,0.18)"}
+                    onBlur={e => e.target.style.borderColor = "rgba(255,255,255,0.07)"}
+                  />
+                </div>
+              )}
               <div style={{ display: "flex", background: "#18181c", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 6, overflow: "hidden" }}>
                 {["month", "week"].map(p => (
                   <button key={p} onClick={() => setPeriodMode(p)} style={{
-                    padding: "5px 12px", fontSize: 9, letterSpacing: "0.06em", textTransform: "uppercase",
+                    padding: isMobile ? "5px 7px" : "5px 12px", fontSize: 9, letterSpacing: "0.06em", textTransform: "uppercase",
                     background: periodMode === p ? "#2a2a2e" : "transparent",
                     color: periodMode === p ? "#ccc" : "#444",
                     border: "none", cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s",
-                  }}>{p === "month" ? "Mois" : "Semaine"}</button>
+                  }}>{p === "month" ? "Mois" : "Sem."}</button>
                 ))}
               </div>
-            </div>
-          )}
-
-          {/* Far right: Bilan toggle (calendar only) */}
-          {view === "calendar" && (
-            <button
-              onClick={() => setShowBilan(b => !b)}
-              style={{
-                marginLeft: "auto", display: "flex", alignItems: "center", gap: 6,
-                padding: "5px 12px", fontSize: 10, letterSpacing: "0.06em",
+              <button onClick={() => setShowBilan(b => !b)} style={{
+                display: "flex", alignItems: "center", gap: isMobile ? 3 : 6,
+                padding: isMobile ? "5px 7px" : "5px 12px", fontSize: isMobile ? 9 : 10, letterSpacing: "0.06em",
                 fontFamily: "inherit", cursor: "pointer", borderRadius: 6, flexShrink: 0,
                 border: showBilan ? "1px solid rgba(255,255,255,0.25)" : "1px solid rgba(255,255,255,0.07)",
                 background: showBilan ? "#fff" : "#18181c",
                 color: showBilan ? "#000" : "#444",
                 transition: "all 0.15s",
-              }}
-            >
-              <span style={{ fontSize: 11 }}>{showBilan ? "●" : "○"}</span> Bilan
-            </button>
+              }}>
+                <span style={{ fontSize: 11 }}>{showBilan ? "●" : "○"}</span>{!isMobile && " Bilan"}
+              </button>
+            </div>
           )}
         </div>
-        {/* ── End Topbar ── */}
 
-        <div className="fade" key={view + periodMode + viewMonth + viewYear} style={{ flex: 1, overflowY: "auto", padding: "22px 28px 40px" }}>
-          {view === "calendar" && <CalendarView data={data} weekData={weekData} viewYear={viewYear} viewMonth={viewMonth} periodMode={periodMode} filters={filters} openPanel={openPanel} openWeekPanel={openWeekPanel} toggleWeekExpand={toggleWeekExpand} expandedWeeks={expandedWeeks} showBilan={showBilan} />}
+        <div className="fade" key={view + periodMode + viewMonth + viewYear} style={{ flex: 1, overflowY: "auto", padding: isMobile ? "10px 8px 40px" : "22px 28px 40px" }}>
+          {view === "calendar" && <CalendarView data={data} weekData={weekData} viewYear={viewYear} viewMonth={viewMonth} periodMode={periodMode} filters={filters} openPanel={openPanel} openWeekPanel={openWeekPanel} toggleWeekExpand={toggleWeekExpand} expandedWeeks={expandedWeeks} showBilan={showBilan} isMobile={isMobile} />}
           {view === "heatmap" && <HeatmapView data={data} viewYear={viewYear} filters={filters} openPanel={openPanel} />}
           {view === "stats" && <StatsView data={data} filters={filters} />}
           {view === "history" && <HistoryView data={data} filters={filters} openPanel={openPanel} />}
@@ -380,12 +409,9 @@ useEffect(() => {
         }}>
           <div style={{ background: "#111114", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 14, width: 420, maxWidth: "94vw", padding: 28, position: "relative", maxHeight: "90vh", overflowY: "auto" }}>
             <button onClick={() => setPanel(null)} style={{ position: "absolute", top: 14, right: 14, background: "#18181c", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "50%", width: 26, height: 26, color: "#888", cursor: "pointer", fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
-
             <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 18, fontWeight: 700, marginBottom: 20, textTransform: "capitalize" }}>
               {parseKey(panel).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
             </div>
-
-            {/* Réalisé */}
             <div style={{ marginBottom: 20 }}>
               <div style={sectionTitle}>Réalisé ce jour</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
@@ -405,8 +431,6 @@ useEffect(() => {
                 ))}
               </div>
             </div>
-
-            {/* Notes par objectif */}
             {CATS.some(c => panelDone[c]) && (
               <div style={{ marginBottom: 20 }}>
                 <div style={sectionTitle}>Notes par objectif</div>
@@ -439,8 +463,6 @@ useEffect(() => {
                 </div>
               </div>
             )}
-
-            {/* Planifier futur */}
             {isFuture(panel) && (
               <div style={{ marginBottom: 20 }}>
                 <div style={sectionTitle}>Planifier (futur)</div>
@@ -462,8 +484,6 @@ useEffect(() => {
                 </div>
               </div>
             )}
-
-            {/* Note globale */}
             <div style={{ marginBottom: 20 }}>
               <div style={sectionTitle}>Note globale 🔒</div>
               <textarea value={panelNote} onChange={e => setPanelNote(e.target.value)} placeholder="Note de la journée…" style={{
@@ -472,7 +492,6 @@ useEffect(() => {
                 resize: "vertical", minHeight: 72, outline: "none", lineHeight: 1.6,
               }} />
             </div>
-
             <div style={{ display: "flex", gap: 8 }}>
               <button onClick={savePanel} style={{ flex: 1, padding: "10px", background: "#fff", color: "#000", border: "none", borderRadius: 8, fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", cursor: "pointer", fontFamily: "inherit", fontWeight: 500 }}>
                 Enregistrer
@@ -514,10 +533,7 @@ useEffect(() => {
   );
 }
 
-// ── Calendar View ────────────────────────────────────────────────
-function CalendarView({ data, weekData, viewYear, viewMonth, periodMode, filters, openPanel, openWeekPanel, toggleWeekExpand, expandedWeeks, showBilan }) {
-
-  // ── Vue Semaine ──
+function CalendarView({ data, weekData, viewYear, viewMonth, periodMode, filters, openPanel, openWeekPanel, toggleWeekExpand, expandedWeeks, showBilan, isMobile }) {
   if (periodMode === "week") {
     const anchor = new Date(viewYear, viewMonth, 1);
     const dow = anchor.getDay() === 0 ? 6 : anchor.getDay() - 1;
@@ -531,10 +547,10 @@ function CalendarView({ data, weekData, viewYear, viewMonth, periodMode, filters
     const isExpanded = expandedWeeks.has(wk);
     return (
       <div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 6 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: isMobile ? 2 : 4, marginBottom: 6 }}>
           {DAY_FR.map(d => <div key={d} style={{ fontSize: 9, textAlign: "center", color: "#333", letterSpacing: "0.1em", textTransform: "uppercase", padding: "4px 0" }}>{d}</div>)}
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: isMobile ? 2 : 4 }}>
           {days.map(({ date, key: k }) => {
             const dayData = data[k] || {};
             const future = isFuture(k);
@@ -545,21 +561,18 @@ function CalendarView({ data, weekData, viewYear, viewMonth, periodMode, filters
               <div key={k} onClick={() => openPanel(k)} style={{
                 background: tod ? "#18181c" : "#111114",
                 border: `1px solid ${tod ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.06)"}`,
-                borderRadius: 8, minHeight: 140, padding: "10px 10px 8px",
+                borderRadius: 8, minHeight: isMobile ? 80 : 140, padding: isMobile ? "6px 4px" : "10px 10px 8px",
                 cursor: "pointer", transition: "border-color 0.15s", position: "relative",
-              }}
-              onMouseEnter={e => e.currentTarget.style.borderColor = "rgba(255,255,255,0.15)"}
-              onMouseLeave={e => e.currentTarget.style.borderColor = tod ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.06)"}
-              >
-                {(dayData.note || hasCatNotes) && <span style={{ position: "absolute", top: 6, right: 6, width: 4, height: 4, borderRadius: "50%", background: "#444" }}></span>}
-                <div style={{ marginBottom: 6 }}>
-                  <span style={{ fontSize: 10, color: tod ? "#fff" : "#555", fontWeight: tod ? 600 : 400 }}>{date.getDate()}</span>
-                  <span style={{ fontSize: 8, color: "#2a2a2a", marginLeft: 4 }}>{date.toLocaleDateString("fr-FR", { month: "short" })}</span>
+              }}>
+                {(dayData.note || hasCatNotes) && <span style={{ position: "absolute", top: 5, right: 5, width: 4, height: 4, borderRadius: "50%", background: "#444" }}></span>}
+                <div style={{ marginBottom: 4 }}>
+                  <span style={{ fontSize: isMobile ? 11 : 10, color: tod ? "#fff" : "#555", fontWeight: tod ? 600 : 400 }}>{date.getDate()}</span>
+                  {!isMobile && <span style={{ fontSize: 8, color: "#2a2a2a", marginLeft: 4 }}>{date.toLocaleDateString("fr-FR", { month: "short" })}</span>}
                 </div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
-                  {shown.map(c => <span key={c} style={{ display: "block", height: 5, width: 22, borderRadius: 2, background: COLORS[c], opacity: future ? 0.35 : 0.85 }}></span>)}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 2 }}>
+                  {shown.map(c => <span key={c} style={{ display: "block", height: isMobile ? 3 : 5, width: isMobile ? 12 : 22, borderRadius: 2, background: COLORS[c], opacity: future ? 0.35 : 0.85 }}></span>)}
                 </div>
-                {shown.length > 0 && (
+                {!isMobile && shown.length > 0 && (
                   <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 3 }}>
                     {shown.map(c => <span key={c} style={{ fontSize: 8, color: COLORS[c], opacity: future ? 0.5 : 0.75, letterSpacing: "0.04em" }}>{LABELS[c]}</span>)}
                   </div>
@@ -568,7 +581,6 @@ function CalendarView({ data, weekData, viewYear, viewMonth, periodMode, filters
             );
           })}
         </div>
-        {/* Bilan strip — conditionnel */}
         {showBilan && (
           <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6 }}>
             <div onClick={() => toggleWeekExpand(wk)} style={{
@@ -581,10 +593,9 @@ function CalendarView({ data, weekData, viewYear, viewMonth, periodMode, filters
               {hasBilan && <span style={{ fontSize: 8, color: "#555" }}>{isExpanded ? "▲" : "▼"}</span>}
               {!hasBilan && <span style={{ fontSize: 8, color: "#2a2a2a" }}>—</span>}
             </div>
-            <div onClick={() => openWeekPanel(wk)} style={{ padding: "4px 10px", fontSize: 8, color: "#333", cursor: "pointer", letterSpacing: "0.06em", textTransform: "uppercase", borderRadius: 5, border: "1px solid rgba(255,255,255,0.05)" }}
-              onMouseEnter={e => { e.currentTarget.style.color = "#888"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)"; }}
-              onMouseLeave={e => { e.currentTarget.style.color = "#333"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.05)"; }}
-            >{hasBilan ? "Modifier" : "+ Écrire"}</div>
+            <div onClick={() => openWeekPanel(wk)} style={{ padding: "4px 10px", fontSize: 8, color: "#333", cursor: "pointer", letterSpacing: "0.06em", textTransform: "uppercase", borderRadius: 5, border: "1px solid rgba(255,255,255,0.05)" }}>
+              {hasBilan ? "Modifier" : "+ Écrire"}
+            </div>
           </div>
         )}
         {showBilan && isExpanded && hasBilan && (
@@ -596,13 +607,11 @@ function CalendarView({ data, weekData, viewYear, viewMonth, periodMode, filters
     );
   }
 
-  // ── Vue Mois ──
   const first = new Date(viewYear, viewMonth, 1);
   let startDow = first.getDay() - 1; if (startDow < 0) startDow = 6;
   const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
   const prevDays = new Date(viewYear, viewMonth, 0).getDate();
   const cells = [];
-
   for (let i = 0; i < startDow; i++) {
     const d = prevDays - startDow + 1 + i;
     const m = viewMonth === 0 ? 11 : viewMonth - 1;
@@ -618,24 +627,23 @@ function CalendarView({ data, weekData, viewYear, viewMonth, periodMode, filters
     const y = viewMonth === 11 ? viewYear + 1 : viewYear;
     cells.push({ key: dateKey(y, m, d), day: d, dim: true, other: true });
   }
-
   const rows = [];
   for (let i = 0; i < cells.length; i += 7) rows.push(cells.slice(i, i + 7));
 
   return (
     <div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 6 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: isMobile ? 2 : 4, marginBottom: 6 }}>
         {DAY_FR.map(d => <div key={d} style={{ fontSize: 9, textAlign: "center", color: "#333", letterSpacing: "0.1em", textTransform: "uppercase", padding: "4px 0" }}>{d}</div>)}
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: isMobile ? 2 : 4 }}>
         {rows.map((row, ri) => {
           const midCell = row.find(c => !c.other) || row[3];
           const wk = weekKeyFromYM(...midCell.key.split("-").map((v, i) => i === 1 ? Number(v) - 1 : Number(v)));
           const hasBilan = !!weekData[wk]?.bilan;
           const isExpanded = expandedWeeks.has(wk);
           return (
-            <div key={ri} style={{ marginBottom: showBilan ? 4 : 0 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
+            <div key={ri} style={{ marginBottom: showBilan ? (isMobile ? 2 : 4) : 0 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: isMobile ? 2 : 4 }}>
                 {row.map(({ key: k, day, dim, other }) => {
                   const dayData = data[k] || {};
                   const future = isFuture(k);
@@ -648,26 +656,26 @@ function CalendarView({ data, weekData, viewYear, viewMonth, periodMode, filters
                     <div key={k} onClick={() => !other && openPanel(k)} style={{
                       background: tod ? "#18181c" : "#111114",
                       border: `1px solid ${tod ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.06)"}`,
-                      borderRadius: 8, minHeight: 76, padding: "7px 7px 6px",
+                      borderRadius: isMobile ? 5 : 8,
+                      minHeight: isMobile ? 42 : 76,
+                      padding: isMobile ? "4px 3px" : "7px 7px 6px",
                       cursor: other ? "default" : "pointer", opacity: dim ? 0.3 : 1,
                       transition: "border-color 0.15s", position: "relative",
                     }}
                     onMouseEnter={e => { if (!other) e.currentTarget.style.borderColor = "rgba(255,255,255,0.15)"; }}
                     onMouseLeave={e => { if (!other) e.currentTarget.style.borderColor = tod ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.06)"; }}
                     >
-                      {(dayData.note || hasCatNotes) && <span style={{ position: "absolute", top: 5, right: 5, width: 4, height: 4, borderRadius: "50%", background: "#444" }}></span>}
-                      <span style={{ fontSize: 10, color: tod ? "#fff" : "#555", display: "block", marginBottom: 5, fontWeight: tod ? 600 : 400 }}>{day}</span>
+                      {(dayData.note || hasCatNotes) && <span style={{ position: "absolute", top: 4, right: 4, width: 3, height: 3, borderRadius: "50%", background: "#444" }}></span>}
+                      <span style={{ fontSize: isMobile ? 11 : 10, color: tod ? "#fff" : "#555", display: "block", marginBottom: isMobile ? 2 : 5, fontWeight: tod ? 600 : 400 }}>{day}</span>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 2 }}>
                         {shown.map(c => (
-                          <span key={c} style={{ display: "block", height: 4, width: 18, borderRadius: 2, background: COLORS[c], opacity: future ? 0.35 : 0.85 }}></span>
+                          <span key={c} style={{ display: "block", height: isMobile ? 3 : 4, width: isMobile ? 8 : 18, borderRadius: 2, background: COLORS[c], opacity: future ? 0.35 : 0.85 }}></span>
                         ))}
                       </div>
                     </div>
                   );
                 })}
               </div>
-
-              {/* Bande Bilan — visible uniquement si showBilan ON */}
               {showBilan && (
                 <div style={{ marginTop: 3, display: "flex", alignItems: "center", gap: 6 }}>
                   <div onClick={() => toggleWeekExpand(wk)} style={{
@@ -676,18 +684,14 @@ function CalendarView({ data, weekData, viewYear, viewMonth, periodMode, filters
                     background: hasBilan ? "rgba(255,255,255,0.03)" : "transparent",
                     border: `1px solid ${hasBilan ? "rgba(255,255,255,0.07)" : "transparent"}`,
                     transition: "all 0.15s",
-                  }}
-                  onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.04)"}
-                  onMouseLeave={e => e.currentTarget.style.background = hasBilan ? "rgba(255,255,255,0.03)" : "transparent"}
-                  >
+                  }}>
                     <span style={{ fontSize: 8, color: "#333", letterSpacing: "0.08em", textTransform: "uppercase" }}>Bilan</span>
                     {hasBilan && <span style={{ fontSize: 8, color: "#555" }}>{isExpanded ? "▲" : "▼"}</span>}
                     {!hasBilan && <span style={{ fontSize: 8, color: "#2a2a2a" }}>—</span>}
                   </div>
-                  <div onClick={() => openWeekPanel(wk)} style={{ padding: "4px 10px", fontSize: 8, color: "#333", cursor: "pointer", letterSpacing: "0.06em", textTransform: "uppercase", borderRadius: 5, border: "1px solid rgba(255,255,255,0.05)", background: "transparent", transition: "all 0.15s" }}
-                    onMouseEnter={e => { e.currentTarget.style.color = "#888"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)"; }}
-                    onMouseLeave={e => { e.currentTarget.style.color = "#333"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.05)"; }}
-                  >{hasBilan ? "Modifier" : "+ Écrire"}</div>
+                  <div onClick={() => openWeekPanel(wk)} style={{ padding: "4px 10px", fontSize: 8, color: "#333", cursor: "pointer", letterSpacing: "0.06em", textTransform: "uppercase", borderRadius: 5, border: "1px solid rgba(255,255,255,0.05)", background: "transparent", transition: "all 0.15s" }}>
+                    {hasBilan ? "Modifier" : "+ Écrire"}
+                  </div>
                 </div>
               )}
               {showBilan && isExpanded && hasBilan && (
@@ -703,7 +707,6 @@ function CalendarView({ data, weekData, viewYear, viewMonth, periodMode, filters
   );
 }
 
-// ── Heatmap View ─────────────────────────────────────────────────
 function HeatmapView({ data, viewYear, filters, openPanel }) {
   const jan1 = new Date(viewYear, 0, 1);
   const startDow = jan1.getDay() === 0 ? 6 : jan1.getDay() - 1;
@@ -756,7 +759,6 @@ function HeatmapView({ data, viewYear, filters, openPanel }) {
   );
 }
 
-// ── Stats View ───────────────────────────────────────────────────
 function StatsView({ data, filters }) {
   const pastKeys = Object.keys(data).filter(k => !isFuture(k)).sort();
   const totals = {}, streakCur = {}, streakBest = {};
@@ -790,7 +792,7 @@ function StatsView({ data, filters }) {
   }
   return (
     <div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: 10, marginBottom: 24 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 10, marginBottom: 24 }}>
         {CATS.filter(c => filters.has(c)).map(cat => (
           <div key={cat} style={{ background: "#111114", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 12, padding: "16px 18px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 9, color: "#444", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 10 }}>
@@ -829,7 +831,6 @@ function StatsView({ data, filters }) {
   );
 }
 
-// ── History View ─────────────────────────────────────────────────
 function HistoryView({ data, filters, openPanel }) {
   const past = Object.keys(data).filter(k => !isFuture(k) && ((data[k].done || []).length > 0 || data[k].note)).sort().reverse();
   const future = Object.keys(data).filter(k => isFuture(k) && (data[k].planned || []).length > 0).sort();
@@ -885,7 +886,6 @@ function HistoryItem({ k, data, filters, openPanel, type }) {
   );
 }
 
-// ── Bilan Semaine View ───────────────────────────────────────────
 function BilanView({ weekData, openWeekPanel }) {
   const now = new Date();
   const seen = new Set(); const uniqueWeeks = [];
@@ -934,7 +934,6 @@ function BilanCard({ wk, bilan, isCurrent, openWeekPanel }) {
   );
 }
 
-// ── Shared styles ────────────────────────────────────────────────
 const btnSmall = {
   display: "flex", alignItems: "center", gap: 6,
   padding: "7px 10px", fontSize: 9, letterSpacing: "0.05em", textTransform: "uppercase",
